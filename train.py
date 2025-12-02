@@ -4,7 +4,7 @@ from torch.nn import functional as F
 import torch.optim as optim
 import numpy as np
 from torch.utils.data import DataLoader
-from Net8 import Net
+from Net import Net
 from dataloader1 import Datases_loader as dataloader
 from Dice_BCEwithLogits import SoftDiceLoss as bcedice
 def inverseDecayScheduler(step, initial_lr, gamma=10, power=0.9, max_iter=80):
@@ -16,7 +16,7 @@ def adjust_lr(optimizer, step, initial_lr):
 device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 batchsz = 4
 lr = 0.0005
-items = 40
+items = 100
 model = Net().to(device)
 criterion = bcedice()
 optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=2e-5)
@@ -75,3 +75,4 @@ if __name__ == '__main__':
     filename = r'C:\Users\15504\Desktop\new4\weights\Net2_3.txt'
     with open(filename, mode='w', newline='') as f:
         f.writelines(str)
+
