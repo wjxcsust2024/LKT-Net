@@ -9,7 +9,7 @@ CUDA 12.1
 Python 3.8， Install the required packages through pip install
 
 
-The code usage process is as follows: training testing statistics; Among them, net is the main network, and block is the network backbone Transformer
+The code usage process is as follows: training———testing————statistics; Among them, net is the main network, and block is the network backbone Transformer
 
 
 Download the training and testing datasets for our model. In addition, we provided the results of inhalation research in the original paper.。
