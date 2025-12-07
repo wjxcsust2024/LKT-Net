@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 from torch.utils.data import DataLoader
-from Net8 import Net
+from Net import Net
 import os
 from dataloader2 import Datases_loader as dataloader
 
@@ -56,4 +56,5 @@ def test():
         np.save(resultsdir + r'/label' + str(idx+1) + '.npy', lab.detach().cpu().numpy())
 
 if __name__ == '__main__':
+
     test()
