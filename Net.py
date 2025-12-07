@@ -1,40 +1,8 @@
+
 import torch.nn.functional as F
-from deform_conv_v3 import *
-from timm.models.layers import to_2tuple
-from block import Block as p2tBlock
-from deformabled import DeformableConv2d
-
-def conv_layer(in_channels, out_channels, kernel_size, stride=1, dilation=1, groups=1):
-    padding = int((kernel_size - 1) / 2) * dilation
-    return nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding=padding, bias=True, dilation=dilation,
-                     groups=groups)
-
-class DWConv(nn.Module):
-    def __init__(self,hidden_features):
-        super(DWConv, self).__init__()
-        self.depthwise_conv = nn.Sequential(
-            nn.Conv2d(hidden_features, hidden_features, kernel_size=5, stride=1, padding=2, dilation=1,
-                      groups=hidden_features), nn.GELU())
-        self.hidden_features = hidden_features
-    def forward(self,x):
-        #x = x.transpose(1, 2).view(x.shape[0], self.hidden_features, x.shape[2], x.shape[3]).contiguous()  # b Ph*Pw c
-        x = self.depthwise_conv(x)
-        #x = x.flatten(2).transpose(1, 2).contiguous()
-        return x
-
-class DepthWiseConv2d(nn.Module):
-    def __init__(self, dim_in, kernel_size=3, padding=1, stride=1, dilation=1):
-        super().__init__()
-
-        self.conv1 = nn.Conv2d(dim_in, dim_in, kernel_size=kernel_size, padding=padding,
-                               stride=stride, dilation=dilation, groups=dim_in)
-        self.norm_layer = nn.GroupNorm(4, dim_in)
-        self.conv2 = nn.Conv2d(dim_in, dim_in, kernel_size=1)
-
-    def forward(self, x):
-        return self.conv2(self.norm_layer(self.conv1(x)))
-
-
+from norms import *
+from timm.models.layers import DropPath, trunc_normal_, to_2tuple
+from block import Block
 
 class SLKA(nn.Module):
     def __init__(self, n_feats, shrink=2, scale=2):
@@ -47,8 +15,16 @@ class SLKA(nn.Module):
             nn.GELU(),
             nn.Conv2d(f // 2, f // 2, kernel_size=(7, 1), stride=(1, 1), padding=(9, 0), groups=f // 2, dilation=3), )
 
-        self.res_2 = nn.AdaptiveMaxPool2d((1, 1))
-        self.res_1 = nn.AdaptiveAvgPool2d((1, 1))
+        self.res_2 = nn.Sequential(
+            nn.AdaptiveMaxPool2d(1),
+            nn.Conv2d(f // 2, f // 2, 1, 1, 0),
+            nn.GELU()
+        )
+        self.res_1 = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(f // 2, f // 2, 1, 1, 0),
+            nn.GELU()
+        )
 
         self.conv = DepthWiseConv2d(f)
         self.conv2 = nn.Conv2d(f, f, 3, padding=3 // 2, groups=f)
@@ -70,7 +46,7 @@ class SLKA(nn.Module):
         x2 = self.LKA(self.res_2(x2))*self.activation(x1)   #7x7
         x1 = self.block(self.res_1(x1))*self.activation(x2)   #5x5
         x_ = torch.cat([x1,x2], dim=1)
-        x3 = F.gelu(x_) + self.ca(c1)
+        x3 = F.gelu(x_) + self.ca(c1)  #这样的效果最好
         a = self.tail(F.sigmoid(self.conv2(x3)))
         return (x*a).reshape(B, C, -1).permute(0, 2, 1)
 
@@ -102,6 +78,36 @@ class ChannelAttention(nn.Module):
         y2 = self.attention_1(x)
         out = self.sigmoid(y1+y2)*x
         return out
+
+def conv_layer(in_channels, out_channels, kernel_size, stride=1, dilation=1, groups=1):
+    padding = int((kernel_size - 1) / 2) * dilation
+    return nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding=padding, bias=True, dilation=dilation,
+                     groups=groups)
+
+class DWConv(nn.Module):
+    def __init__(self,hidden_features):
+        super(DWConv, self).__init__()
+        self.depthwise_conv = nn.Sequential(
+            nn.Conv2d(hidden_features, hidden_features, kernel_size=5, stride=1, padding=2, dilation=1,
+                      groups=hidden_features), nn.GELU())
+        self.hidden_features = hidden_features
+    def forward(self,x):
+        #x = x.transpose(1, 2).view(x.shape[0], self.hidden_features, x.shape[2], x.shape[3]).contiguous()  # b Ph*Pw c
+        x = self.depthwise_conv(x)
+        #x = x.flatten(2).transpose(1, 2).contiguous()
+        return x
+
+class DepthWiseConv2d(nn.Module):
+    def __init__(self, dim_in, kernel_size=3, padding=1, stride=1, dilation=1):
+        super().__init__()
+
+        self.conv1 = nn.Conv2d(dim_in, dim_in, kernel_size=kernel_size, padding=padding,
+                               stride=stride, dilation=dilation, groups=dim_in)
+        self.norm_layer = nn.GroupNorm(4, dim_in)
+        self.conv2 = nn.Conv2d(dim_in, dim_in, kernel_size=1)
+
+    def forward(self, x):
+        return self.conv2(self.norm_layer(self.conv1(x)))
 
 class h_sigmoid(nn.Module):
     def __init__(self, inplace=True):
@@ -187,24 +193,27 @@ class Expand(nn.Module):  #放大
         return x.reshape(B, self.dim//2, -1).permute(0, 2, 1)
 
 
+
+
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
         self.embed = Embed(512)
 
-        self.l1 = nn.Sequential(p2tBlock(96, pool_ratios=[12,16,20,24]),
-                                p2tBlock(96, pool_ratios=[12,16,20,24]))
 
-        self.l2 = nn.Sequential(p2tBlock(192, pool_ratios=[6,8,10,12]),
-                                p2tBlock(192, pool_ratios= [6,8,10,12]))
+        self.l1 = nn.Sequential(Block(96, 96),
+                                Block(96, 96))
 
-        self.l3 = nn.Sequential(p2tBlock(384, pool_ratios= [3,4,5,6]),
-                                p2tBlock(384, pool_ratios= [3,4,5,6]))
+        self.l2 = nn.Sequential(Block(192, 192),
+                                Block(192, 192))
 
-        self.l4 = nn.Sequential(p2tBlock(768, pool_ratios= [1,2,3,4]),
-                                #p2tBlock(768, pool_ratios= [1,2,3,4]),
-                                p2tBlock(768, pool_ratios= [1,2,3,4]),
-                                p2tBlock(768, pool_ratios= [1,2,3,4]))
+        self.l3 = nn.Sequential(Block(384, 384),
+                                Block(384, 384))
+
+        self.l4 = nn.Sequential(#Block(768, 768),
+                                Block(768, 768),
+                                Block(768, 768),
+                                Block(768, 768))
 
         self.m1 = Merge(96, 128, 128)
         self.m2 = Merge(192, 64, 64)
@@ -214,14 +223,14 @@ class Net(nn.Module):
         self.p2 = Expand(384, 32)
         self.p1 = Expand(192, 64)
 
-        self.d3 = nn.Sequential(p2tBlock(384, pool_ratios= [3,4,5,6]),
-                                p2tBlock(384, pool_ratios= [3,4,5,6]))
+        self.d3 = nn.Sequential(Block(384, 384),
+                                Block(384, 384))
 
-        self.d2 = nn.Sequential(p2tBlock(192, pool_ratios=[6,8,10,12]),
-                                p2tBlock(192, pool_ratios=[6,8,10,12]))
+        self.d2 = nn.Sequential(Block(192, 192),
+                                Block(192, 192))
 
-        self.d1 = nn.Sequential(p2tBlock(96, pool_ratios=[12,16,20,24]),
-                                p2tBlock(96, pool_ratios=[12,16,20,24]))
+        self.d1 = nn.Sequential(Block(96, 96),
+                                Block(96, 96))
 
         self.dbm3 = SLKA(384)
         self.dbm2 = SLKA(192)
@@ -255,7 +264,6 @@ class Net(nn.Module):
         x = self.p1(x)  # torch.Size([1, 16384, 96])
         x1_temp = self.dbm1(x+x1)
         x = self.d1(x1_temp)  # 128x128
-
         x = self.up(x.permute(0, 2, 1).reshape(B, 96, 128, 128))  # torch.Size([1, 6, 512, 512])
         x = self.seg(x)
         return x
@@ -269,5 +277,4 @@ if __name__ == '__main__':
     out = part(x)
     print(out.shape)
     # out = dbm(y)
-
     # print(out.shape)
