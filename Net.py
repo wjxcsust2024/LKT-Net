@@ -46,7 +46,7 @@ class SLKA(nn.Module):
         x2 = self.LKA(self.res_2(x2))*self.activation(x1)   #7x7
         x1 = self.block(self.res_1(x1))*self.activation(x2)   #5x5
         x_ = torch.cat([x1,x2], dim=1)
-        x3 = F.gelu(x_) + self.ca(c1)  #这样的效果最好
+        x3 = F.gelu(x_) + self.ca(c1)  
         a = self.tail(F.sigmoid(self.conv2(x3)))
         return (x*a).reshape(B, C, -1).permute(0, 2, 1)
 
@@ -158,7 +158,7 @@ class Embed(nn.Module):
         return x
 
 
-class Merge(nn.Module):   #缩小
+class Merge(nn.Module):   
     def __init__(self, dim, h, w):
         super(Merge, self).__init__()
         self.conv = nn.Conv2d(dim, dim*2, kernel_size=2, stride=2, padding=0)
@@ -176,7 +176,7 @@ class Merge(nn.Module):   #缩小
         x = self.c_1(x)
         return x.reshape(B, self.dim*2, -1).permute(0, 2, 1)
 
-class Expand(nn.Module):  #放大
+class Expand(nn.Module):  
     def __init__(self, dim, h):
         super(Expand, self).__init__()
         self.dim = dim
@@ -211,8 +211,8 @@ class Net(nn.Module):
                                 Block(384, 384))
 
         self.l4 = nn.Sequential(#Block(768, 768),
-                                Block(768, 768),
-                                Block(768, 768),
+                                #Block(768, 768),
+                                #Block(768, 768),
                                 Block(768, 768))
 
         self.m1 = Merge(96, 128, 128)
@@ -278,3 +278,4 @@ if __name__ == '__main__':
     print(out.shape)
     # out = dbm(y)
     # print(out.shape)
+
